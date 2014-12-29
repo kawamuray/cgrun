@@ -1,18 +1,18 @@
 package main
 
 import (
-	"os"
-	"strings"
-	"io/ioutil"
-	"fmt"
-	"os/exec"
-	"flag"
-	"time"
 	"crypto/md5"
-	"path/filepath"
-	"syscall"
 	"encoding/hex"
+	"flag"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
 )
 
 const HelperInitProgName = "__cgrun_init__"
@@ -71,7 +71,7 @@ func setupSignalHandler(handler func()) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGHUP, syscall.SIGTERM)
 	go func() {
-		<- sigCh
+		<-sigCh
 		if !childStarted {
 			handler()
 		}
@@ -101,7 +101,7 @@ func setupHierarchy(hirName string, params map[string]map[string]string) (err er
 		}
 
 		for p, val := range values {
-			path := filepath.Join(hirPath, subsys + "." + p)
+			path := filepath.Join(hirPath, subsys+"."+p)
 			if err := ioutil.WriteFile(path, []byte(val), 0); err != nil {
 				return err
 			}

@@ -100,8 +100,8 @@ func setupHierarchy(hirName string, params map[string]map[string]string) (err er
 			return err
 		}
 
-		for p, val := range values {
-			path := filepath.Join(hirPath, subsys+"."+p)
+		for param, val := range values {
+			path := filepath.Join(hirPath, subsys+"."+param)
 			if err := ioutil.WriteFile(path, []byte(val), 0); err != nil {
 				return err
 			}

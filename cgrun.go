@@ -17,6 +17,13 @@ import (
 
 const HelperInitProgName = "__cgrun_init__"
 
+var mandatoryParameters = map[string][]string{
+	"cpuset": []string{
+		"cpus",
+		"mems",
+	},
+}
+
 var subsysMountPoints = make(map[string]string)
 
 func initMountPointMap() error {
@@ -98,6 +105,21 @@ func setupHierarchy(hirName string, params map[string]map[string]string) (err er
 		hirPath := filepath.Join(mountPoint, hirName)
 		if err := os.Mkdir(hirPath, 0750); err != nil {
 			return err
+		}
+		if mandParams, ok := mandatoryParameters[subsys]; ok {
+			// Copy mandatory parameters from parent hierarchy
+			for _, param := range mandParams {
+				parentPath := filepath.Join(filepath.Dir(hirPath), subsys+"."+param)
+				buf, err := ioutil.ReadFile(parentPath)
+				if err != nil {
+					return err
+				}
+
+				path := filepath.Join(hirPath, subsys+"."+param)
+				if err := ioutil.WriteFile(path, buf, 0); err != nil {
+					return err
+				}
+			}
 		}
 
 		for param, val := range values {

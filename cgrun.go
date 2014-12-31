@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/md5"
 	"encoding/hex"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"github.com/jessevdk/go-flags"
 )
 
 const HelperInitProgName = "__cgrun_init__"
@@ -149,14 +149,22 @@ func cleanupHierarchy(hirName string, params map[string]map[string]string) {
 	}
 }
 
-func execProgram(hirName string, params map[string]map[string]string, args []string) (int, error) {
+func getTasksFiles(hirName string, params map[string]map[string]string) ([]string, error) {
 	var helperArgs []string
 	for subsys, _ := range params {
 		mountPoint, ok := subsysMountPoints[subsys]
 		if !ok || mountPoint == "" {
-			return -1, fmt.Errorf("subsystem '%s' is not mounted", subsys)
+			return nil, fmt.Errorf("subsystem '%s' is not mounted", subsys)
 		}
 		helperArgs = append(helperArgs, filepath.Join(mountPoint, hirName, "tasks"))
+	}
+	return helperArgs, nil
+}
+
+func execProgram(hirName string, params map[string]map[string]string, args []string) (int, error) {
+	helperArgs, err := getTasksFiles(hirName, params)
+	if err != nil {
+		return -1, err
 	}
 	helperArgs = append(helperArgs, "--")
 	helperArgs = append(helperArgs, args...)
@@ -190,17 +198,94 @@ func execProgram(hirName string, params map[string]map[string]string, args []str
 	return 0, nil
 }
 
-func initialMain() int {
-	flagBaseParent := flag.String("parent", "/", "Parent hierarchy that should be inherited by default")
-	flag.Parse()
+func isPidFile(name string) bool {
+	for _, c := range name {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
 
-	baseParent := *flagBaseParent
+func collectPids(pid string, tasksFiles []string) error {
+	pidByte := []byte(pid)
+	for _, tasksFile := range tasksFiles {
+		if err := ioutil.WriteFile(tasksFile, pidByte, 0); err != nil {
+			return err
+		}
+	}
+
+	if !opts.Tree {
+		return nil
+	}
+
+	// Search for my children
+	dp, err := os.Open("/proc")
+	if err != nil {
+		return err
+	}
+	dirEnts, err := dp.Readdirnames(-1)
+	dp.Close()
+	if err != nil {
+		return err
+	}
+	for _, name := range dirEnts {
+		if !isPidFile(name) {
+			continue
+		}
+		buf, err := ioutil.ReadFile("/proc/"+name+"/stat")
+		if err != nil {
+			return err
+		}
+		f := strings.Fields(string(buf))
+		if f[3] == pid {
+			if err := collectPids(f[0], tasksFiles); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// TODO probably this can be done better by using memory.oom_control
+func waitNonChildPid(pid int) {
+	for syscall.Kill(pid, 0) == nil {
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+func seizePid(hirName string, params map[string]map[string]string, pid int) error {
+	childStarted = true
+	tasksFiles, err := getTasksFiles(hirName, params)
+	if err != nil {
+		return err
+	}
+	if err := collectPids(fmt.Sprintf("%d", pid), tasksFiles); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, hirName)
+	waitNonChildPid(pid)
+	return nil
+}
+
+func initialMain() int {
+	args, err := flags.ParseArgs(&opts, os.Args[1:])
+	if err != nil {
+		if err.(*flags.Error).Type == flags.ErrHelp {
+			return 0
+		} else {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	}
+
+	baseParent := opts.Parent
 	for len(baseParent) > 0 && baseParent[0] == '/' {
 		baseParent = baseParent[1:]
 	}
 
 	params := make(map[string]map[string]string)
-	args := flag.Args()
 	for i, arg := range args {
 		sep := strings.Index(arg, "=")
 		if sep == -1 {
@@ -238,12 +323,24 @@ func initialMain() int {
 	}
 	defer cleanupHierarchy(hirName, params)
 
-	exitStatus, err := execProgram(hirName, params, args)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to execute command: %s\n", err)
-		return 1
+	if opts.Pid != nil {
+		if *opts.Pid <= 0 {
+			fmt.Fprintf(os.Stderr, "invalid pid %d\n", *opts.Pid)
+			return 1
+		}
+		if err := seizePid(hirName, params, *opts.Pid); err != nil {
+			fmt.Fprintf(os.Stderr, "can't attach to process %d: %s\n", *opts.Pid, err)
+			return 1
+		}
+		return 0
+	} else {
+		exitStatus, err := execProgram(hirName, params, args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to execute command: %s\n", err)
+			return 1
+		}
+		return exitStatus
 	}
-	return exitStatus
 }
 
 func helperMain() {
@@ -270,6 +367,14 @@ func helperMain() {
 	if err := syscall.Exec(binPath, args, os.Environ()); err != nil {
 		fmt.Fprintf(os.Stderr, "can't exec '%s': %s\n", args[0], err)
 	}
+}
+
+var opts struct {
+	Parent string `short:"P" long:"parent" value-name:"PARENT" default:"/" description:"Parent hierarchy that should be inherited"`
+
+	// For attach mode
+	Pid *int `short:"p" long:"pid" value-name:"PID" description:"The target pid to attach volatile cgroup"`
+	Tree bool `short:"T" long:"tree" description:"When used with -p option, decide whether attach for whole process tree or not"`
 }
 
 func main() {

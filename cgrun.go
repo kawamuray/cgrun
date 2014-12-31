@@ -334,6 +334,10 @@ func initialMain() int {
 		}
 		return 0
 	} else {
+		if len(args) == 0 {
+			fmt.Fprintf(os.Stderr, "no target program specified\n")
+			return 1
+		}
 		exitStatus, err := execProgram(hirName, params, args)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to execute command: %s\n", err)

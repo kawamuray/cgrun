@@ -4,17 +4,17 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"github.com/jessevdk/go-flags"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
-	"github.com/jessevdk/go-flags"
-	"os/user"
-	"strconv"
 )
 
 const HelperInitProgName = "__cgrun_init__"
@@ -255,7 +255,7 @@ func collectPids(pid string, tasksFiles []string) error {
 		if !isPidFile(name) {
 			continue
 		}
-		buf, err := ioutil.ReadFile("/proc/"+name+"/stat")
+		buf, err := ioutil.ReadFile("/proc/" + name + "/stat")
 		if err != nil {
 			return err
 		}
@@ -432,12 +432,12 @@ func helperMain() {
 }
 
 var opts struct {
-	Parent string `short:"P" long:"parent" value-name:"PARENT" default:"/" description:"Parent hierarchy that should be inherited"`
-	Uid string `short:"u" long:"uid" value-name:"UID_OR_USERNAME" description:"User ID to create cgroup hierarchy/execute the program"`
-	user *user.User // Filled based on Uid
+	Parent string     `short:"P" long:"parent" value-name:"PARENT" default:"/" description:"Parent hierarchy that should be inherited"`
+	Uid    string     `short:"u" long:"uid" value-name:"UID_OR_USERNAME" description:"User ID to create cgroup hierarchy/execute the program"`
+	user   *user.User // Filled based on Uid
 
 	// For attach mode
-	Pid *int `short:"p" long:"pid" value-name:"PID" description:"The target pid to attach volatile cgroup"`
+	Pid  *int `short:"p" long:"pid" value-name:"PID" description:"The target pid to attach volatile cgroup"`
 	Tree bool `short:"T" long:"tree" description:"When used with -p option, decide whether attach for whole process tree or not"`
 }
 

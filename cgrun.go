@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 	"github.com/jessevdk/go-flags"
+	"os/user"
+	"strconv"
 )
 
 const HelperInitProgName = "__cgrun_init__"
@@ -106,6 +108,20 @@ func setupHierarchy(hirName string, params map[string]map[string]string) (err er
 		if err := os.Mkdir(hirPath, 0750); err != nil {
 			return err
 		}
+		if opts.Uid != "" {
+			uid, _ := strconv.Atoi(opts.user.Uid)
+			gid, _ := strconv.Atoi(opts.user.Gid)
+			err := filepath.Walk(hirPath, func(path string, _ os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				return os.Chown(path, uid, gid)
+			})
+			if err != nil {
+				return err
+			}
+		}
+
 		if mandParams, ok := mandatoryParameters[subsys]; ok {
 			// Copy mandatory parameters from parent hierarchy
 			for _, param := range mandParams {
@@ -162,10 +178,16 @@ func getTasksFiles(hirName string, params map[string]map[string]string) ([]strin
 }
 
 func execProgram(hirName string, params map[string]map[string]string, args []string) (int, error) {
-	helperArgs, err := getTasksFiles(hirName, params)
+	helperArgs := []string{
+		string(opts.user.Uid),
+		string(opts.user.Gid),
+	}
+
+	tasksFiles, err := getTasksFiles(hirName, params)
 	if err != nil {
 		return -1, err
 	}
+	helperArgs = append(helperArgs, tasksFiles...)
 	helperArgs = append(helperArgs, "--")
 	helperArgs = append(helperArgs, args...)
 
@@ -285,6 +307,32 @@ func initialMain() int {
 		baseParent = baseParent[1:]
 	}
 
+	if opts.Uid != "" {
+		var (
+			usr *user.User
+			err error
+		)
+		if _, err = strconv.Atoi(opts.Uid); err == nil {
+			// Assume it's a uid
+			usr, err = user.LookupId(opts.Uid)
+		} else {
+			// Assume it's a username
+			usr, err = user.Lookup(opts.Uid)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "can't obtain user info from '%s': %s\n", opts.Uid, err)
+			return 1
+		}
+		opts.user = usr
+	} else {
+		usr, err := user.Current()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to get current user: %s\n", err)
+			return 1
+		}
+		opts.user = usr
+	}
+
 	params := make(map[string]map[string]string)
 	for i, arg := range args {
 		sep := strings.Index(arg, "=")
@@ -348,8 +396,18 @@ func initialMain() int {
 }
 
 func helperMain() {
-	args := os.Args[1:]
+	uid, _ := strconv.Atoi(os.Args[1])
+	gid, _ := strconv.Atoi(os.Args[2])
+	if err := syscall.Setgid(gid); err != nil {
+		fmt.Fprintf(os.Stderr, "can't set gid: %s", err)
+		return
+	}
+	if err := syscall.Setuid(uid); err != nil {
+		fmt.Fprintf(os.Stderr, "can't set uid: %s", err)
+		return
+	}
 
+	args := os.Args[3:]
 	pid := []byte(fmt.Sprintf("%d", os.Getpid()))
 	for i, arg := range args {
 		if arg == "--" {
@@ -375,6 +433,8 @@ func helperMain() {
 
 var opts struct {
 	Parent string `short:"P" long:"parent" value-name:"PARENT" default:"/" description:"Parent hierarchy that should be inherited"`
+	Uid string `short:"u" long:"uid" value-name:"UID_OR_USERNAME" description:"User ID to create cgroup hierarchy/execute the program"`
+	user *user.User // Filled based on Uid
 
 	// For attach mode
 	Pid *int `short:"p" long:"pid" value-name:"PID" description:"The target pid to attach volatile cgroup"`
